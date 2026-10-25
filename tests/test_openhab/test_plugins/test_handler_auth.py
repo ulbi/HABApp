@@ -1,86 +1,71 @@
-"""Tests for authentication logic in the openHAB connection handler."""
+"""Tests for authentication logic in the openHAB config model and connection handler."""
 from __future__ import annotations
 
-from HABApp.openhab.connection.plugins.websockets import WebsocketPlugin
+from base64 import b64encode
+
+import pytest
+from pydantic import ValidationError
+
+from HABApp.config.models.openhab import Connection
 
 
 class TestBuildToken:
-    """Tests for WebsocketPlugin._build_token."""
+    """Tests for the token/auth resolution of the openHAB Connection config model."""
+
+    def test_token_in_explicit_field(self):
+        conn = Connection(url='http://localhost:8080', token='oh.mytoken.abc')
+        assert conn.build_url_token() == 'oh.mytoken.abc'
+        assert conn.build_basic_auth_header() == (('Authorization', 'Bearer oh.mytoken.abc'), )
 
     def test_token_in_login(self):
-        from aiohttp import BasicAuth
-        auth = BasicAuth('oh.mytoken.abc', '')
-        assert WebsocketPlugin._build_token(auth) == 'oh.mytoken.abc'
-
-    def test_token_in_password(self):
-        from aiohttp import BasicAuth
-        auth = BasicAuth('', 'oh.mytoken.abc')
-        assert WebsocketPlugin._build_token(auth) == 'oh.mytoken.abc'
+        conn = Connection(user='oh.mytoken.abc')
+        assert conn.build_url_token() == 'oh.mytoken.abc'
 
     def test_basic_auth_fallback(self):
-        from base64 import b64encode
-        from aiohttp import BasicAuth
-        auth = BasicAuth('admin', 'secret')
+        conn = Connection(user='admin', password='secret')
         expected = b64encode(b'admin:secret').decode()
-        assert WebsocketPlugin._build_token(auth) == expected
+        assert conn.build_url_token() == expected
+
+    def test_explicit_token_takes_precedence_over_user(self):
+        conn = Connection(token='oh.explicit', user='oh.user_token')
+        assert conn.build_url_token() == 'oh.explicit'
 
 
 class TestTokenResolution:
-    """Tests for the token resolution logic used in handler.py on_setup.
+    """Tests for the token resolution logic used when establishing the openHAB connection.
 
-    When a token is found in the legacy 'user' or 'password' config fields it
-    must be migrated to Bearer auth with a deprecation warning.  The returned
-    ``legacy_field`` name is non-None only when migration occurred.
+    An explicit token field is used as Bearer token. An openHAB access token in the "user"
+    field is treated as token as well. Plain user/password credentials fall back to basic auth.
     """
 
-    class _Config:
-        def __init__(self, token='', user='', password=''):
-            self.token = token
-            self.user = user
-            self.password = password
-
-    def _resolve(self, config) -> tuple[str | None, str | None]:
-        """Replicates the token resolution in handler.py on_setup."""
-        bearer = config.token or None
-        legacy_field = None
-        if not bearer:
-            for fname, fval in (('user', config.user), ('password', config.password)):
-                if fval.startswith('oh.'):
-                    bearer = fval
-                    legacy_field = fname
-                    break
-        return bearer, legacy_field
-
     def test_explicit_token_field(self):
-        cfg = self._Config(token='oh.explicit.token')
-        bearer, legacy = self._resolve(cfg)
-        assert bearer == 'oh.explicit.token'
-        assert legacy is None
+        cfg = Connection(token='oh.explicit.token')
+        assert cfg.auth_complete()
+        assert cfg.build_basic_auth_header() == (('Authorization', 'Bearer oh.explicit.token'), )
 
     def test_token_in_user_migrated(self):
-        """Token placed in 'user' is detected and migration flag is set."""
-        cfg = self._Config(user='oh.legacy_user_token')
-        bearer, legacy = self._resolve(cfg)
-        assert bearer == 'oh.legacy_user_token'
-        assert legacy == 'user'
+        """Token placed in 'user' is detected and used for authentication."""
+        cfg = Connection(user='oh.legacy_user_token')
+        assert cfg.auth_complete()
+        assert cfg.build_url_token() == 'oh.legacy_user_token'
 
-    def test_token_in_password_migrated(self):
-        """Token placed in 'password' is detected and migration flag is set."""
-        cfg = self._Config(password='oh.legacy_pass_token')
-        bearer, legacy = self._resolve(cfg)
-        assert bearer == 'oh.legacy_pass_token'
-        assert legacy == 'password'
+    def test_token_in_password_is_error(self):
+        """Token placed in 'password' is rejected with a validation error."""
+        with pytest.raises(ValidationError):
+            Connection(password='oh.legacy_pass_token')
 
     def test_explicit_token_takes_precedence_over_user(self):
         """Explicit token field wins; no migration flag when both are set."""
-        cfg = self._Config(token='oh.explicit', user='oh.user_token')
-        bearer, legacy = self._resolve(cfg)
-        assert bearer == 'oh.explicit'
-        assert legacy is None
+        cfg = Connection(token='oh.explicit', user='oh.user_token')
+        assert cfg.build_basic_auth_header() == (('Authorization', 'Bearer oh.explicit'), )
 
     def test_plain_credentials_no_token(self):
-        """Plain username/password: no bearer token resolved."""
-        cfg = self._Config(user='admin', password='secret')
-        bearer, legacy = self._resolve(cfg)
-        assert bearer is None
-        assert legacy is None
+        """Plain username/password: no bearer token resolved, basic auth is used."""
+        cfg = Connection(user='admin', password='secret')
+        assert cfg.auth_complete()
+        header = cfg.build_basic_auth_header()[0][1]
+        assert header.startswith('Basic ')
+        assert b64encode(b'admin:secret').decode() in header
+
+    def test_no_credentials_not_auth_complete(self):
+        assert not Connection().auth_complete()

@@ -167,6 +167,8 @@ Connection
 
 .. autopydantic_model:: WebsocketEventFilter
 
+.. autoclass:: EventTypeFilterEnum
+
 
 Ping
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

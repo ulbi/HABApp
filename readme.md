@@ -128,6 +128,28 @@ MyOpenhabRule()
 
 # Changelog
 
+#### 26.10.1 (2026-10-23)
+- Added EventSourceStr as an easy way to access the ``event.source`` parts
+- Added ``EventSourceFilter`` to filter openHAB events based on the ``bundle`` and/or ``actor`` of their source
+- Point, HSB and RGB only compare to themselves and not to tuples anymore.
+  Use ``obj.to_tuple()`` to get the tuple values
+- Events use __slots__
+- Updated dependencies
+
+
+#### 26.10.0 (2026-10-05)
+- Updated dependencies to fix an issue during installation
+- Updated docs for access token
+
+#### 26.09.0 (2026-09-26)
+- Reworked many internals
+- Breaking: Requires at least Python 3.12
+- Breaking: ``Rule.get_items()`` is not a staticmethod anymore -> must always be ``self.get_items()``
+- Fixed a bug with the scheduler and sun azimuth
+- Breaking: ``MqttPublishOptions(...)`` needs to be replaced with ``self.mqtt.publish_options(...)`` in rules
+- Instead of HABApp.Parameter use HABApp.parameters.Parameter
+- Fixed an issue where a Rule was not properly unloaded
+
 #### 25.12.0 (2025-12-08)
 - Breaking: Requires at least Python 3.11
 - Added ``last_value`` to the item which contains the last known value before the current one
